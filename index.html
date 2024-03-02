@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lector de Precios</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f8f8f8;
+    }
+
+    #container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    h2 {
+        margin-top: 0;
+    }
+
+    input[type="text"] {
+        padding: 8px;
+        font-size: 16px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        margin-right: 10px;
+    }
+
+    button {
+        padding: 10px 20px;
+        font-size: 16px;
+        background-color: #4caf50;
+        color: #fff;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+
+    button:hover {
+        background-color: #45a049;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+
+    th, td {
+        padding: 10px;
+        border-bottom: 1px solid #ddd;
+        text-align: left;
+    }
+
+    th {
+        background-color: #f2f2f2;
+    }
+
+    td input[type="number"],
+    td input[type="text"] {
+        padding: 8px;
+        width: 80px;
+        text-align: center;
+    }
+
+    td:last-child {
+        text-align: center;
+    }
+
+    .alert {
+        padding: 15px;
+        background-color: #f44336;
+        color: white;
+        margin-bottom: 15px;
+        display: none;
+    }
+
+    .closebtn {
+        margin-left: 15px;
+        color: white;
+        font-weight: bold;
+        float: right;
+        font-size: 22px;
+        line-height: 20px;
+        cursor: pointer;
+        transition: 0.3s;
+    }
+
+    .closebtn:hover {
+        color: black;
+    }
+</style>
+</head>
+<body>
+
+<div id="container">
+    <h2>Lector de Precios</h2>
+    <input type="text" id="barcodeInput" placeholder="Escanea el código de barras">
+    <button onclick="buscarProducto()">Buscar Producto</button>
+    <button onclick="descargarTablaComoExcel()">Descargar tabla como Excel</button>
+
+    <div id="alert" class="alert">
+        <span class="closebtn" onclick="this.parentElement.style.display='none';">&times;</span> 
+        <strong>Error:</strong> El código de barras leído no tiene un nombre asignado.
+    </div>
+
+    <table id="productosTable">
+        <thead>
+            <tr>
+                <th>Código</th>
+                <th>Descripción</th>
+                <th>Cantidad</th>
+                <th>Estación</th>
+                <th>IdQuantio</th>
+                <th>Stock</th>
+                <th>Eliminar</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.4/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.0/FileSaver.min.js"></script>
+<script>
+    let barcodeTimer; // Variable para el temporizador del código de barras
+
+    // Escucha el evento de entrada en el campo de código de barras
+    document.getElementById("barcodeInput").addEventListener("input", function() {
+        clearTimeout(barcodeTimer); // Reinicia el temporizador en cada entrada
+        barcodeTimer = setTimeout(buscarProducto, 2000); // Espera 1 segundo antes de buscar el producto
+    });
+
+    function buscarProducto() {
+        const barcode = document.getElementById("barcodeInput").value;
+        if (barcode.trim() !== "") { // Verifica si el código de barras no está vacío
+            cargarBaseDeDatosYBuscar(barcode);
+            document.getElementById("barcodeInput").value = ""; // Limpia el campo después de la lectura
+        }
+    }
+
+    function cargarBaseDeDatosYBuscar(barcode) {
+        Promise.all([fetch('Base.json').then(response => response.json()), fetch('BaseStock.json').then(response => response.json())])
+            .then(data => {
+                const baseData = data[0];
+                const stockData = data[1];
+                const infoProducto = buscarEnBaseDeDatos(baseData, barcode);
+                const stockInfo = buscarStockEnBaseDeDatos(stockData, barcode);
+                if (infoProducto !== null) {
+                    const detalle = infoProducto.detalle;
+                    const idQuantio = infoProducto.idQuantio;
+                    const stock = stockInfo ? stockInfo.stock : '';
+                    if (!existeEnTabla(barcode)) { // Verifica si el producto no está en la tabla
+                        agregarProductoATabla(barcode, detalle, idQuantio, stock);
+                    } else {
+                        alert("Este producto ya está en la tabla.");
+                    }
+                } else {
+                    document.getElementById("alert").style.display = "block";
+                    agregarProductoATabla(barcode, '', '', ''); // Agrega una fila vacía para permitir la entrada del nombre del producto
+                }
+            })
+            .catch(error => {
+                console.error('Error al cargar la base de datos:', error);
+            });
+    }
+
+    function existeEnTabla(barcode) {
+        const tableRows = document.querySelectorAll("#productosTable tbody tr");
+        for (let i = 0; i < tableRows.length; i++) {
+            const codigoCell = tableRows[i].cells[0];
+            if (codigoCell.textContent === barcode) {
+                return true; // El producto ya está en la tabla
+            }
+        }
+        return false;
+    }
+
+    function buscarEnBaseDeDatos(data, barcode) {
+        const producto = data.find(item => item["Codigo de barra"] === barcode);
+        return producto ? { detalle: producto.Detalle, idQuantio: producto.IdQuantio } : null;
+    }
+
+    function buscarStockEnBaseDeDatos(data, barcode) {
+        return data.find(item => item["Codigo de barra"] === barcode);
+    }
+
+    function agregarProductoATabla(codigo, detalle, idQuantio, stock) {
+        const tableBody = document.querySelector("#productosTable tbody");
+        const row = tableBody.insertRow();
+        const codigoCell = row.insertCell(0);
+        const descripcionCell = row.insertCell(1);
+        const cantidadCell = row.insertCell(2);
+        const estacionCell = row.insertCell(3);
+        const idQuantioCell = row.insertCell(4);
+        const stockCell = row.insertCell(5);
+        const eliminarCell = row.insertCell(6);
+
+        codigoCell.textContent = codigo;
+        descripcionCell.innerHTML = `<input type="text" value="${detalle}" placeholder="Ingrese el nombre del producto">`;
+        cantidadCell.innerHTML = `<input type="number" value="1" min="1">`;
+        estacionCell.innerHTML = `<input type="text" placeholder="Ingrese la estación">`;
+        idQuantioCell.textContent = idQuantio;
+        stockCell.textContent = stock;
+        eliminarCell.innerHTML = `<button onclick="eliminarFila(this)">X</button>`;
+    }
+
+    function eliminarFila(button) {
+        const row = button.closest("tr");
+        row.remove();
+    }
+
+    function descargarTablaComoExcel() {
+        const table = document.getElementById("productosTable");
+        const rows = table.querySelectorAll("tbody tr");
+        const data = [["Código", "Descripción", "Cantidad", "Estación", "IdQuantio", "Stock"]]; // Agregamos "Stock" como encabezado
+
+        rows.forEach(row => {
+            const rowData = [];
+            const codigoCell = row.cells[0];
+            const descripcionCell = row.cells[1];
+            const cantidadCell = row.cells[2];
+            const estacionCell = row.cells[3];
+            const idQuantioCell = row.cells[4];
+            const stockCell = row.cells[5]; // Agregamos la celda de stock
+
+            const codigo = codigoCell.textContent;
+            const descripcion = descripcionCell.querySelector("input[type=text]").value;
+            const cantidad = cantidadCell.querySelector("input[type=number]").value;
+            const estacion = estacionCell.querySelector("input[type=text]").value;
+            const idQuantio = idQuantioCell.textContent;
+            const stock = stockCell.textContent; // Obtenemos el stock de la celda de stock
+
+            rowData.push(codigo);
+            rowData.push(descripcion);
+            rowData.push(cantidad);
+            rowData.push(estacion);
+            rowData.push(idQuantio);
+            rowData.push(stock); // Agregamos el stock a la fila
+
+            data.push(rowData);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Productos");
+        const wbout = XLSX.write(wb, {bookType:'xlsx',  type: 'binary'});
+        function s2ab(s) {
+            const buf = new ArrayBuffer(s.length);
+            const view = new Uint8Array(buf);
+            for (let i = 0; i < s.length; i++) view[i] = s.charCodeAt(i) & 0xFF;
+            return buf;
+        }
+        saveAs(new Blob([s2ab(wbout)], { type: "application/octet-stream" }), 'productos.xlsx');
+    }
+</script>
+</body>
+</html>
